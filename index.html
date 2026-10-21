@@ -1,0 +1,168 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Red Detector</title>
+<style>
+  body {
+    background: #111;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 20px;
+  }
+  video {
+    width: 100%;
+    max-width: 500px;
+    border-radius: 12px;
+    background: #333;
+  }
+  button {
+    padding: 14px 22px;
+    margin: 8px;
+    border: 0;
+    border-radius: 10px;
+    font-size: 17px;
+    cursor: pointer;
+  }
+  #status { font-size: 20px; }
+</style>
+</head>
+<body>
+<h1>🔴 Red Detector</h1>
+<p>Point your iPhone camera at something red.</p>
+
+<video id="camera" autoplay muted playsinline></video>
+<canvas id="canvas" hidden></canvas>
+
+<p id="status">Camera stopped</p>
+<p id="details">Waiting to start...</p>
+
+<button id="start">Start camera</button>
+<button id="stop">Stop camera</button>
+
+<script>
+const video = document.getElementById("camera");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", {
+  willReadFrequently: true
+});
+const status = document.getElementById("status");
+const details = document.getElementById("details");
+
+let stream = null;
+let running = false;
+let wasRed = false;
+let audio = null;
+let timer = null;
+
+function beep() {
+  if (!audio) return;
+
+  const oscillator = audio.createOscillator();
+  const volume = audio.createGain();
+
+  oscillator.type = "sine";
+  oscillator.frequency.value = 880;
+  volume.gain.value = 0.15;
+
+  oscillator.connect(volume);
+  volume.connect(audio.destination);
+
+  oscillator.start();
+  oscillator.stop(audio.currentTime + 0.13);
+}
+
+function detectRed() {
+  if (!running || video.readyState < 2) return;
+
+  ctx.drawImage(video, 0, 0, 80, 60);
+  const pixels = ctx.getImageData(0, 0, 80, 60).data;
+
+  let redPixels = 0;
+  const totalPixels = 80 * 60;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const r = pixels[i];
+    const g = pixels[i + 1];
+    const b = pixels[i + 2];
+
+    if (r > 100 && r > g * 1.4 && r > b * 1.4) {
+      redPixels++;
+    }
+  }
+
+  // At least 5% of the image must look red.
+  const redNow = redPixels / totalPixels >= 0.05;
+
+  if (redNow && !wasRed) {
+    beep();
+    status.textContent = "🔴 RED DETECTED!";
+  } else if (!redNow) {
+    status.textContent = "No red detected";
+  }
+
+  details.textContent =
+    "Red pixels: " +
+    Math.round(redPixels / totalPixels * 100) + "%";
+
+  wasRed = redNow;
+}
+
+document.getElementById("start").onclick = async () => {
+  try {
+    if (running) return;
+
+    // Enable sound after the user's tap.
+    audio = new (window.AudioContext ||
+                 window.webkitAudioContext)();
+
+    await audio.resume();
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" }
+      }
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    canvas.width = 80;
+    canvas.height = 60;
+
+    running = true;
+    wasRed = false;
+    status.textContent = "Camera running";
+    timer = setInterval(detectRed, 150);
+  } catch (error) {
+    status.textContent = "Could not start camera";
+    details.textContent = error.message;
+  }
+};
+
+document.getElementById("stop").onclick = () => {
+  running = false;
+  clearInterval(timer);
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  video.srcObject = null;
+
+  if (audio) {
+    audio.close();
+    audio = null;
+  }
+
+  wasRed = false;
+  status.textContent = "Camera stopped";
+  details.textContent = "Press Start camera to try again.";
+};
+</script>
+</body>
+</html>
